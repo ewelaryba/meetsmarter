@@ -1,3 +1,4 @@
+var awspublish = require('gulp-awspublish');
 var gulp = require('gulp');
 var less = require('gulp-less');
 var browserSync = require('browser-sync').create();
@@ -7,21 +8,11 @@ var rename = require("gulp-rename");
 var uglify = require('gulp-uglify');
 var pkg = require('./package.json');
 
-// Set the banner content
-var banner = ['/*!\n',
-    ' * Start Bootstrap - <%= pkg.title %> v<%= pkg.version %> (<%= pkg.homepage %>)\n',
-    ' * Copyright 2013-' + (new Date()).getFullYear(), ' <%= pkg.author %>\n',
-    ' * Licensed under <%= pkg.license.type %> (<%= pkg.license.url %>)\n',
-    ' */\n',
-    ''
-].join('');
-
 // Compile LESS files from /less into /css
 gulp.task('less', function() {
     return gulp.src('less/grayscale.less')
         .pipe(less())
-        .pipe(header(banner, { pkg: pkg }))
-        .pipe(gulp.dest('css'))
+        .pipe(gulp.dest('tmp/css'))
         .pipe(browserSync.reload({
             stream: true
         }))
@@ -29,10 +20,10 @@ gulp.task('less', function() {
 
 // Minify compiled CSS
 gulp.task('minify-css', ['less'], function() {
-    return gulp.src('css/grayscale.css')
+    return gulp.src('tmp/css/grayscale.css')
         .pipe(cleanCSS({ compatibility: 'ie8' }))
         .pipe(rename({ suffix: '.min' }))
-        .pipe(gulp.dest('css'))
+        .pipe(gulp.dest('build/css'))
         .pipe(browserSync.reload({
             stream: true
         }))
@@ -42,9 +33,8 @@ gulp.task('minify-css', ['less'], function() {
 gulp.task('minify-js', function() {
     return gulp.src('js/grayscale.js')
         .pipe(uglify())
-        .pipe(header(banner, { pkg: pkg }))
         .pipe(rename({ suffix: '.min' }))
-        .pipe(gulp.dest('js'))
+        .pipe(gulp.dest('build/js'))
         .pipe(browserSync.reload({
             stream: true
         }))
@@ -53,10 +43,10 @@ gulp.task('minify-js', function() {
 // Copy vendor libraries from /node_modules into /vendor
 gulp.task('copy', function() {
     gulp.src(['node_modules/bootstrap/dist/**/*', '!**/npm.js', '!**/bootstrap-theme.*', '!**/*.map'])
-        .pipe(gulp.dest('vendor/bootstrap'))
+        .pipe(gulp.dest('build/vendor/bootstrap'))
 
     gulp.src(['node_modules/jquery/dist/jquery.js', 'node_modules/jquery/dist/jquery.min.js'])
-        .pipe(gulp.dest('vendor/jquery'))
+        .pipe(gulp.dest('build/vendor/jquery'))
 
     gulp.src([
             'node_modules/font-awesome/**',
@@ -66,8 +56,37 @@ gulp.task('copy', function() {
             '!node_modules/font-awesome/*.md',
             '!node_modules/font-awesome/*.json'
         ])
-        .pipe(gulp.dest('vendor/font-awesome'))
-})
+        .pipe(gulp.dest('build/vendor/font-awesome'))
+
+    gulp.src('index.html').pipe(gulp.dest('build'));
+
+    gulp.src('img/**').pipe(gulp.dest('build/img'));
+
+});
+
+gulp.task('publish', function() {
+
+  // create a new publisher using S3 options
+  // http://docs.aws.amazon.com/AWSJavaScriptSDK/latest/AWS/S3.html#constructor-property
+  var publisher = awspublish.create({
+    region: 'us-west-2',
+    params: {
+      Bucket: 'meetsmartr'
+    }
+  }, {
+    cacheFileName: './s3-upload-cache'
+  });
+
+  return gulp.src('./build/**')
+     // gzip, Set Content-Encoding headers and add .gz extension
+    .pipe(awspublish.gzip({ ext: '.gz' }))
+
+    // create a cache file to speed up consecutive uploads
+    .pipe(publisher.cache())
+
+     // print upload updates to console
+    .pipe(awspublish.reporter());
+});
 
 // Run everything
 gulp.task('default', ['less', 'minify-css', 'minify-js', 'copy']);
