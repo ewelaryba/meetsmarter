@@ -1,4 +1,6 @@
-var awspublish = require('gulp-awspublish');
+
+var S3 = require('gulp-s3-upload');
+var clean = require('gulp-clean');
 var gulp = require('gulp');
 var less = require('gulp-less');
 var browserSync = require('browser-sync').create();
@@ -7,46 +9,32 @@ var cleanCSS = require('gulp-clean-css');
 var rename = require("gulp-rename");
 var uglify = require('gulp-uglify');
 var pkg = require('./package.json');
-
-// Compile LESS files from /less into /css
-gulp.task('less', function() {
-    return gulp.src('less/grayscale.less')
-        .pipe(less())
-        .pipe(gulp.dest('tmp/css'))
-        .pipe(browserSync.reload({
-            stream: true
-        }))
-});
+var rev = require('gulp-rev');
+var revReplace = require("gulp-rev-replace");
+var runSequence = require('run-sequence');
 
 // Minify compiled CSS
-gulp.task('minify-css', ['less'], function() {
-    return gulp.src('tmp/css/grayscale.css')
+gulp.task('minify-css', function() {
+  return gulp.src('less/grayscale.less')
+        .pipe(less())
         .pipe(cleanCSS({ compatibility: 'ie8' }))
-        .pipe(rename({ suffix: '.min' }))
-        .pipe(gulp.dest('build/css'))
-        .pipe(browserSync.reload({
-            stream: true
-        }))
+        .pipe(gulp.dest('tmp'));
 });
 
 // Minify JS
 gulp.task('minify-js', function() {
-    return gulp.src('js/grayscale.js')
+    return gulp.src('grayscale.js')
         .pipe(uglify())
-        .pipe(rename({ suffix: '.min' }))
-        .pipe(gulp.dest('build/js'))
-        .pipe(browserSync.reload({
-            stream: true
-        }))
+        .pipe(gulp.dest('tmp/js'));
 });
 
 // Copy vendor libraries from /node_modules into /vendor
 gulp.task('copy', function() {
     gulp.src(['node_modules/bootstrap/dist/**/*', '!**/npm.js', '!**/bootstrap-theme.*', '!**/*.map'])
-        .pipe(gulp.dest('build/vendor/bootstrap'))
+        .pipe(gulp.dest('./tmp/vendor/bootstrap'))
 
     gulp.src(['node_modules/jquery/dist/jquery.js', 'node_modules/jquery/dist/jquery.min.js'])
-        .pipe(gulp.dest('build/vendor/jquery'))
+        .pipe(gulp.dest('tmp/vendor/jquery'))
 
     gulp.src([
             'node_modules/font-awesome/**',
@@ -56,55 +44,65 @@ gulp.task('copy', function() {
             '!node_modules/font-awesome/*.md',
             '!node_modules/font-awesome/*.json'
         ])
-        .pipe(gulp.dest('build/vendor/font-awesome'))
+        .pipe(gulp.dest('tmp/vendor/font-awesome'));
 
-    gulp.src('index.html').pipe(gulp.dest('build'));
+    gulp.src(['tmp/vendor/**/*'])
+        .pipe(gulp.dest('build/vendor'))
 
-    gulp.src('img/**').pipe(gulp.dest('build/img'));
+    gulp.src(['img/**'])
+            .pipe(gulp.dest('build/img'))
+
+    gulp.src(['tmp/*'])
+    .pipe(rev())
+    .pipe(gulp.dest('build'))
+    .pipe(rev.manifest())
+    .pipe(gulp.dest('build'));
+
+    gulp.src('index.html')
+    .pipe(revReplace({manifest: gulp.src("./build/rev-manifest.json") }))
+    .pipe(gulp.dest('build/'))
 
 });
 
-gulp.task('publish', function() {
+gulp.task("upload", function() {
+  var s3 = S3({useIAM:true});
 
-  // create a new publisher using S3 options
-  // http://docs.aws.amazon.com/AWSJavaScriptSDK/latest/AWS/S3.html#constructor-property
-  var publisher = awspublish.create({
-    region: 'us-west-2',
-    params: {
-      Bucket: 'meetsmartr'
-    }
-  }, {
-    cacheFileName: './s3-upload-cache'
-  });
+  var longLiveResourceDate = new Date();
+  longLiveResourceDate.setUTCFullYear(2020);
 
-  return gulp.src('./build/**')
-     // gzip, Set Content-Encoding headers and add .gz extension
-    .pipe(awspublish.gzip({ ext: '.gz' }))
-
-    // create a cache file to speed up consecutive uploads
-    .pipe(publisher.cache())
-
-     // print upload updates to console
-    .pipe(awspublish.reporter());
+    gulp.src("./build/**")
+        .pipe(s3({
+            Bucket: 'meetsmartr', //  Required
+            ACL:    'public-read' ,
+            maps: {
+            }
+        }, {
+            Region: 'us-west-2',
+            maxRetries: 5
+        }))
+    ;
 });
 
 // Run everything
-gulp.task('default', ['less', 'minify-css', 'minify-js', 'copy']);
+gulp.task('default', () => {
+   runSequence('minify-css', 'minify-js', 'copy', () => {
+     console.log('built output');
+   });
+});
 
 // Configure the browserSync task
 gulp.task('browserSync', function() {
     browserSync.init({
         server: {
-            baseDir: ''
+            baseDir: './build'
         },
     })
 })
 
 // Dev task with browserSync
-gulp.task('dev', ['browserSync', 'less', 'minify-css', 'minify-js'], function() {
-    gulp.watch('less/*.less', ['less']);
-    gulp.watch('css/*.css', ['minify-css']);
-    gulp.watch('js/*.js', ['minify-js']);
+gulp.task('dev', ['browserSync', 'default'], function() {
+    gulp.watch('css/*.css', 'default', browserSync.reload);
+    gulp.watch('js/*.js', 'default', browserSync.reload);
     // Reloads the browser whenever HTML or JS files change
     gulp.watch('*.html', browserSync.reload);
     gulp.watch('js/**/*.js', browserSync.reload);

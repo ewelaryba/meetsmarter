@@ -2,3 +2,4 @@ node_modules
 build
 tmp
 vendor
+s3-upload-cache
