@@ -1,6 +1,5 @@
 node_modules
-build
-tmp
-vendor
-s3-upload-cache
-.DS_Store
+dist
+.tmp
+bower_components
+test/bower_components
