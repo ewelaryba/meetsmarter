@@ -3,3 +3,4 @@ build
 tmp
 vendor
 s3-upload-cache
+.DS_Store

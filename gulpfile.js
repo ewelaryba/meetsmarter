@@ -74,7 +74,11 @@ gulp.task("upload", function() {
         .pipe(s3({
             Bucket: 'meetsmartr', //  Required
             ACL:    'public-read' ,
+            uploadNewFilesOnly: false,
             maps: {
+                Expires: function(keyname) {
+                     return new Date();
+                }
             }
         }, {
             Region: 'us-west-2',
