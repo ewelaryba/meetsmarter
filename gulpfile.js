@@ -1,83 +1,176 @@
-
+// generated on 2017-04-16 using generator-webapp 2.4.1
+const gulp = require('gulp');
+const gulpLoadPlugins = require('gulp-load-plugins');
 var S3 = require('gulp-s3-upload');
-var clean = require('gulp-clean');
-var gulp = require('gulp');
-var less = require('gulp-less');
-var browserSync = require('browser-sync').create();
-var header = require('gulp-header');
-var cleanCSS = require('gulp-clean-css');
-var rename = require("gulp-rename");
-var uglify = require('gulp-uglify');
-var pkg = require('./package.json');
-var rev = require('gulp-rev');
-var revReplace = require("gulp-rev-replace");
-var runSequence = require('run-sequence');
+const RevAll = require('gulp-rev-all');
+const browserSync = require('browser-sync').create();
+const del = require('del');
+const wiredep = require('wiredep').stream;
+const runSequence = require('run-sequence');
+const path = require('path');
 
-// Minify compiled CSS
-gulp.task('minify-css', function() {
-  return gulp.src('less/grayscale.less')
-        .pipe(less())
-        .pipe(cleanCSS({ compatibility: 'ie8' }))
-        .pipe(gulp.dest('tmp'));
+const $ = gulpLoadPlugins();
+const reload = browserSync.reload;
+
+var dev = true;
+
+gulp.task('styles', () => {
+  return gulp.src('app/styles/*.scss')
+    .pipe($.plumber())
+    .pipe($.if(dev, $.sourcemaps.init()))
+    .pipe($.sass.sync({
+      outputStyle: 'expanded',
+      precision: 10,
+      includePaths: ['.']
+    }).on('error', $.sass.logError))
+    .pipe($.autoprefixer({browsers: ['> 1%', 'last 2 versions', 'Firefox ESR']}))
+    .pipe($.if(dev, $.sourcemaps.write()))
+    .pipe(gulp.dest('.tmp/styles'))
+    .pipe(reload({stream: true}));
 });
 
-// Minify JS
-gulp.task('minify-js', function() {
-    return gulp.src('grayscale.js')
-        .pipe(uglify())
-        .pipe(gulp.dest('tmp/js'));
+gulp.task('scripts', () => {
+  return gulp.src('app/scripts/**/*.js')
+    .pipe($.plumber())
+    .pipe($.if(dev, $.sourcemaps.init()))
+    .pipe($.babel())
+    .pipe($.if(dev, $.sourcemaps.write('.')))
+    .pipe(gulp.dest('.tmp/scripts'))
+    .pipe(reload({stream: true}));
 });
 
-// Copy vendor libraries from /node_modules into /vendor
-gulp.task('copy', function() {
-    gulp.src(['node_modules/bootstrap/dist/**/*', '!**/npm.js', '!**/bootstrap-theme.*', '!**/*.map'])
-        .pipe(gulp.dest('./tmp/vendor/bootstrap'))
+function lint(files) {
+  return gulp.src(files)
+    .pipe($.eslint({ fix: true }))
+    .pipe(reload({stream: true, once: true}))
+    .pipe($.eslint.format())
+    .pipe($.if(!browserSync.active, $.eslint.failAfterError()));
+}
 
-    gulp.src(['node_modules/jquery/dist/jquery.js', 'node_modules/jquery/dist/jquery.min.js'])
-        .pipe(gulp.dest('tmp/vendor/jquery'))
-
-    gulp.src([
-            'node_modules/font-awesome/**',
-            '!node_modules/font-awesome/**/*.map',
-            '!node_modules/font-awesome/.npmignore',
-            '!node_modules/font-awesome/*.txt',
-            '!node_modules/font-awesome/*.md',
-            '!node_modules/font-awesome/*.json'
-        ])
-        .pipe(gulp.dest('tmp/vendor/font-awesome'));
-
-    gulp.src(['tmp/vendor/**/*'])
-        .pipe(gulp.dest('build/vendor'))
-
-    gulp.src(['img/**'])
-            .pipe(gulp.dest('build/img'))
-
-    gulp.src(['tmp/*'])
-    .pipe(rev())
-    .pipe(gulp.dest('build'))
-    .pipe(rev.manifest())
-    .pipe(gulp.dest('build'));
-
-    gulp.src('index.html')
-    .pipe(revReplace({manifest: gulp.src("./build/rev-manifest.json") }))
-    .pipe(gulp.dest('build/'))
-
+gulp.task('lint', () => {
+  return lint('app/scripts/**/*.js')
+    .pipe(gulp.dest('app/scripts'));
 });
 
-gulp.task("upload", function() {
+gulp.task('html', ['styles', 'scripts'], () => {
+  return gulp.src('app/*.html')
+    .pipe($.useref({searchPath: ['.tmp', 'app', '.']}))
+    .pipe($.if(/\.js$/, $.uglify({compress: {drop_console: true}})))
+    .pipe($.if(/\.css$/, $.cssnano({safe: true, autoprefixer: false})))
+    .pipe($.if(/\.html$/, $.htmlmin({
+      collapseWhitespace: true,
+      minifyCSS: true,
+      minifyJS: {compress: {drop_console: true}},
+      processConditionalComments: true,
+      removeComments: true,
+      removeEmptyAttributes: true,
+      removeScriptTypeAttributes: true,
+      removeStyleLinkTypeAttributes: true
+    })))
+    .pipe(gulp.dest('dist'));
+});
+
+gulp.task('images', () => {
+  return gulp.src('app/images/**/*')
+    .pipe($.cache($.imagemin()))
+    .pipe(gulp.dest('dist/images'));
+});
+
+gulp.task('fonts', () => {
+  return gulp.src(require('main-bower-files')('**/*.{eot,svg,ttf,woff,woff2}', function (err) {})
+    .concat('app/fonts/**/*'))
+    .pipe($.if(dev, gulp.dest('.tmp/fonts'), gulp.dest('dist/fonts')));
+});
+
+gulp.task('extras', () => {
+  return gulp.src([
+    'app/*',
+    '!app/*.html'
+  ], {
+    dot: true
+  }).pipe(gulp.dest('dist'));
+});
+
+gulp.task('clean', del.bind(null, ['.tmp', 'dist']));
+
+gulp.task('serve', () => {
+  runSequence(['clean', 'wiredep'], ['styles', 'scripts', 'fonts'], () => {
+    browserSync.init({
+      notify: false,
+      port: 9000,
+      server: {
+        baseDir: ['.tmp', 'app'],
+        routes: {
+          '/bower_components': 'bower_components'
+        }
+      }
+    });
+
+    gulp.watch([
+      'app/*.html',
+      'app/images/**/*',
+      '.tmp/fonts/**/*'
+    ]).on('change', reload);
+
+    gulp.watch('app/styles/**/*.scss', ['styles']);
+    gulp.watch('app/scripts/**/*.js', ['scripts']);
+    gulp.watch('app/fonts/**/*', ['fonts']);
+    gulp.watch('bower.json', ['wiredep', 'fonts']);
+  });
+});
+
+gulp.task('serve:dist', ['default'], () => {
+  browserSync.init({
+    notify: false,
+    port: 9000,
+    server: {
+      baseDir: ['dist']
+    }
+  });
+});
+
+// inject bower components
+gulp.task('wiredep', () => {
+  gulp.src('app/styles/*.scss')
+    .pipe($.filter(file => file.stat && file.stat.size))
+    .pipe(wiredep({
+      ignorePath: /^(\.\.\/)+/
+    }))
+    .pipe(gulp.dest('app/styles'));
+
+  gulp.src('app/*.html')
+    .pipe(wiredep({
+      exclude: ['bootstrap-sass'],
+      ignorePath: /^(\.\.\/)*\.\./
+    }))
+    .pipe(gulp.dest('app'));
+});
+
+gulp.task('build', ['lint', 'html', 'images', 'fonts', 'extras'], () => {
+  return gulp.src('dist/**/*').pipe($.size({title: 'build', gzip: true}));
+});
+
+gulp.task('upload', () => {
   var s3 = S3({useIAM:true});
 
   var longLiveResourceDate = new Date();
   longLiveResourceDate.setUTCFullYear(2020);
 
-    gulp.src("./build/**")
+    gulp.src('dist/**/*')
+        .pipe(RevAll.revision({ dontRenameFile: [/^\/favicon.ico$/g, '.html', /robots.txt$/g] }))
         .pipe(s3({
-            Bucket: 'meetsmartr', //  Required
+            Bucket: 'beta.meetsmartr', //  Required
             ACL:    'public-read' ,
-            uploadNewFilesOnly: false,
             maps: {
-                Expires: function(keyname) {
-                     return new Date();
+                'CacheControl': (resource) => {
+                  if (/.html$/g.test(resource)) {
+                    return 'max-age=5';
+                  }
+                  var nonCacheable = [/^\/favicon.ico$/g, /robots.txt$/g].find((regex) => {return regex.test(resource)})
+                  if (nonCacheable) {
+                    return 'no-store, max-age=0';
+                  }
+                  return 'max-age=86400';
                 }
             }
         }, {
@@ -87,27 +180,16 @@ gulp.task("upload", function() {
     ;
 });
 
-// Run everything
-gulp.task('default', () => {
-   runSequence('minify-css', 'minify-js', 'copy', () => {
-     console.log('built output');
-   });
+gulp.task('publish', () => {
+  return new Promise(resolve => {
+    dev = false;
+    runSequence(['clean', 'wiredep'], 'build', 'upload', resolve);
+  });
 });
 
-// Configure the browserSync task
-gulp.task('browserSync', function() {
-    browserSync.init({
-        server: {
-            baseDir: './build'
-        },
-    })
-})
-
-// Dev task with browserSync
-gulp.task('dev', ['browserSync', 'default'], function() {
-    gulp.watch('css/*.css', 'default', browserSync.reload);
-    gulp.watch('js/*.js', 'default', browserSync.reload);
-    // Reloads the browser whenever HTML or JS files change
-    gulp.watch('*.html', browserSync.reload);
-    gulp.watch('js/**/*.js', browserSync.reload);
+gulp.task('default', () => {
+  return new Promise(resolve => {
+    dev = false;
+    runSequence(['clean', 'wiredep'], 'build', resolve);
+  });
 });
